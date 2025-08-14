@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+
+
 # streamlit_github_ui_fixed_codeql.py
 
 """
@@ -19,6 +21,10 @@ Features:
  - Publish generated wiki pages to GitHub Wiki by cloning <owner>/<repo>.wiki.git, committing and pushing
 
  - Option: send file contents to MCP proxy as plain text (default) or base64 (for compatibility)
+
+This file is the updated version that extracts multiple branches from the natural prompt and
+
+automatically generates create_branch payloads when creating a new repo.
 
 """
 
@@ -48,7 +54,7 @@ import streamlit as st
 
 # --- Config / env ---
 
-st.set_page_config(page_title="MCP GitHub Prompt UI (CodeQL + Wiki push)", layout="wide")
+st.set_page_config(page_title="MCP GitHub Prompt UI (CodeQL + Wiki auto-publish)", layout="wide")
 
 DEFAULT_MCP_PROXY = os.environ.get("MCP_PROXY", "http://127.0.0.1:8080/call")
 
@@ -72,79 +78,79 @@ on:
 
  push:
 
-  branches: [ "{branch}" ]
+ branches: [ "{branch}" ]
 
  pull_request:
 
-  branches: [ "{branch}" ]
+ branches: [ "{branch}" ]
 
  schedule:
 
-  - cron: '0 3 * * 0' # weekly
+ - cron: '0 3 * * 0' # weekly
 
 jobs:
 
  analyze:
 
-  name: Analyze
+ name: Analyze
 
-  runs-on: ubuntu-latest
+ runs-on: ubuntu-latest
 
-  permissions:
+ permissions:
 
-   actions: read
+  actions: read
 
-   contents: read
+  contents: read
 
-   security-events: write
+  security-events: write
 
-  strategy:
+ strategy:
 
-   fail-fast: false
+  fail-fast: false
 
-   matrix:
+  matrix:
 
-    language: [ 'javascript', 'typescript' ]
+  language: [ 'javascript', 'typescript' ]
 
-  steps:
+ steps:
 
-   - name: Checkout repository
+  - name: Checkout repository
 
-    uses: actions/checkout@v4
+  uses: actions/checkout@v4
 
-   - name: Initialize CodeQL
+  - name: Initialize CodeQL
 
-    uses: github/codeql-action/init@v3
+  uses: github/codeql-action/init@v3
 
-    with:
+  with:
 
-     languages: ${{ matrix.language }}
+   languages: ${{ matrix.language }}
 
-   - name: Install dependencies
+  - name: Install dependencies
 
-    run: |
+  run: |
 
-     if [ -f package-lock.json ]; then
+   if [ -f package-lock.json ]; then
 
-      npm ci
+   npm ci
 
-     elif [ -f yarn.lock ]; then
+   elif [ -f yarn.lock ]; then
 
-      yarn install
+   yarn install
 
-     else
+   else
 
-      npm install
+   npm install
 
-     fi
+   fi
 
-   - name: Autobuild
+  - name: Autobuild
 
-    uses: github/codeql-action/autobuild@v3
+  uses: github/codeql-action/autobuild@v3
 
-   - name: Perform CodeQL Analysis
+  - name: Perform CodeQL Analysis
 
-    uses: github/codeql-action/analyze@v3
+  uses: github/codeql-action/analyze@v3
 
 """).strip()
 
@@ -372,11 +378,7 @@ def azure_chat_completion(user_text: str, temperature: float = 0.0, max_tokens: 
 
       protocol_kb = ""
 
-  base_system = (
-
-    "You are a documentation writer assistant. ALWAYS output valid JSON only for the requested format. "
-
-  )
+  base_system = ("You are a documentation writer assistant. ALWAYS output valid JSON only for the requested format. ")
 
   system_prompt = (protocol_kb + "\n\n" + base_system) if protocol_kb else base_system
 
@@ -456,16 +458,6 @@ def fetch_file_content(owner: str, repo: str, path: str, ref: str = "main") -> s
 
 def push_files_to_wiki_git(owner: str, repo: str, files: List[Dict], commit_message: str = "Add wiki pages (MCP UI)") -> Tuple[bool, str]:
 
-  """
-
-  Clone the <owner>/<repo>.wiki.git using an HTTPS URL that embeds the PAT, write files, commit and push.
-
-  Returns (ok, logs). Does not print the PAT anywhere in logs.
-
-  files: [{"path": "Home.md", "content": "markdown content (plain text)"}]
-
-  """
-
   token = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN") or GITHUB_PAT
 
   if not token:
@@ -478,17 +470,11 @@ def push_files_to_wiki_git(owner: str, repo: str, files: List[Dict], commit_mess
 
   try:
 
-    # Construct authenticated clone URL (token embedded). We will NOT print the token.
-
     auth_remote = f"https://{token}@github.com/{owner}/{repo}.wiki.git"
 
     normal_remote = f"https://github.com/{owner}/{repo}.wiki.git"
 
-    # For logs, do not show the token; show a masked placeholder instead
-
     logs.append(f"Cloning wiki remote: {normal_remote} (using PAT provided in environment)")
-
-    # Clone
 
     clone_proc = subprocess.run(
 
@@ -506,8 +492,6 @@ def push_files_to_wiki_git(owner: str, repo: str, files: List[Dict], commit_mess
 
       return False, "\n".join(logs)
 
-    # Configure a safe local git user (so commits succeed)
-
     try:
 
       subprocess.run(["git", "-C", tempdir, "config", "user.email", "mcp-ui@example.com"], check=True,
@@ -524,8 +508,6 @@ def push_files_to_wiki_git(owner: str, repo: str, files: List[Dict], commit_mess
 
       logs.append(f"Warning: failed to set git config: {e}")
 
-    # Write files into the cloned wiki working tree (overwrite if present)
-
     for f in files:
 
       path = f.get("path")
@@ -539,8 +521,6 @@ def push_files_to_wiki_git(owner: str, repo: str, files: List[Dict], commit_mess
       full = os.path.join(tempdir, path)
 
       os.makedirs(os.path.dirname(full) or full, exist_ok=True)
-
-      # content should be plain text here (wiki expects markdown). If it's base64, decode.
 
       if isinstance(content, str) and is_base64(content):
 
@@ -562,21 +542,17 @@ def push_files_to_wiki_git(owner: str, repo: str, files: List[Dict], commit_mess
 
       logs.append(f"Wrote wiki file: {path}")
 
-    # git add, commit
-
     add_proc = subprocess.run(["git", "-C", tempdir, "add", "--all"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
     logs.append("git add output:\n" + add_proc.stdout.decode("utf-8", errors="ignore"))
 
     commit_proc = subprocess.run(["git", "-C", tempdir, "commit", "-m", commit_message],
 
-                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
     commit_out = commit_proc.stdout.decode("utf-8", errors="ignore")
 
     logs.append("git commit output:\n" + commit_out)
-
-    # if nothing to commit, it's okay — continue
 
     if commit_proc.returncode != 0:
 
@@ -588,11 +564,9 @@ def push_files_to_wiki_git(owner: str, repo: str, files: List[Dict], commit_mess
 
         return False, "\n".join(logs)
 
-    # push using the authenticated remote (origin currently points to the URL with token)
-
     push_proc = subprocess.run(["git", "-C", tempdir, "push", "origin", "HEAD"],
 
-                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
+           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
 
     push_out = push_proc.stdout.decode("utf-8", errors="ignore")
 
@@ -602,13 +576,11 @@ def push_files_to_wiki_git(owner: str, repo: str, files: List[Dict], commit_mess
 
       return False, "\n".join(logs)
 
-    # For hygiene: reset the remote URL to the normal non-token variant to avoid keeping token in config
-
     try:
 
       subprocess.run(["git", "-C", tempdir, "remote", "set-url", "origin", normal_remote],
 
-              check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+          check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
       logs.append("Reset remote URL to token-less URL for hygiene.")
 
@@ -637,6 +609,101 @@ def push_files_to_wiki_git(owner: str, repo: str, files: List[Dict], commit_mess
     except Exception:
 
       pass
+
+# --- Extract multiple branches from prompt ---
+
+def extract_branches_from_prompt(prompt: str) -> List[str]:
+
+  """
+
+  Attempt to extract multiple branch names from natural text.
+
+  Returns a list of unique branch names (preserves order of discovery).
+
+  Patterns supported (examples):
+
+   - "branches: feat-a, feat-b, hotfix"
+
+   - "add branches feat-a and feat-b"
+
+   - "create branch 'feat-a' and branch 'feat-b'"
+
+   - "branch feat-a, branch feat-b"
+
+  Branch characters allowed: letters, numbers, dot, underscore, hyphen, slash.
+
+  """
+
+  if not prompt:
+
+    return []
+
+  found = []
+
+  # 1) Look for a "branches:" or "branches -" style list up to newline or period
+
+  m = re.search(r"branches?\s*[:\-]\s*([^\n\.]+)", prompt, flags=re.IGNORECASE)
+
+  if m:
+
+    listpart = m.group(1)
+
+    # split on commas and " and "
+
+    parts = re.split(r"\s*(?:,|and|&)\s*", listpart)
+
+    for p in parts:
+
+      p = p.strip().strip(" '\"")
+
+      if re.fullmatch(r"[A-Za-z0-9._/\-]+", p):
+
+        if p not in found:
+
+          found.append(p)
+
+  # 2) If none found, or to collect more, find all occurrences of "branch(s) named X" or "branch X"
+
+  # Use findall to collect possible repeated mentions
+
+  for pat in [
+
+    r"branch(?:es)?\s+(?:named\s+)?['\"]?([A-Za-z0-9._/\-]+)['\"]?",
+
+    r"['\"]([A-Za-z0-9._/\-]+)['\"]\s*(?:branch|branches)?"
+
+  ]:
+
+    for mm in re.findall(pat, prompt, flags=re.IGNORECASE):
+
+      name = mm.strip().strip("'\"")
+
+      if re.fullmatch(r"[A-Za-z0-9._/\-]+", name) and name not in found:
+
+        found.append(name)
+
+  # 3) fallback: look for sequences after "create branch" or "add branch" with comma/and separators
+
+  m2 = re.search(r"(?:create|add)\s+branches?\s+(.+?)(?:[.;\n]|$)", prompt, flags=re.IGNORECASE)
+
+  if m2:
+
+    listpart = m2.group(1)
+
+    parts = re.split(r"\s*(?:,|and|&)\s*", listpart)
+
+    for p in parts:
+
+      p = p.strip().strip(" '\"")
+
+      if re.fullmatch(r"[A-Za-z0-9._/\-]+", p):
+
+        if p not in found:
+
+          found.append(p)
+
+  return found
+
 # --- UI Layout ---
 
 st.title("MCP — GitHub Prompt UI (CodeQL + Wiki auto-publish)")
@@ -665,7 +732,7 @@ st.markdown("Write a natural prompt (optional):")
 
 prompt_text = st.text_area("Natural prompt (optional)", value="", height=120,
 
-             placeholder="e.g. Create a repo named node-demo, add branch feature-auth and add CodeQL workflow")
+       placeholder="e.g. Create a repo named node-demo, add branches feat-a,feat-b and hotfix, add CodeQL workflow")
 
 st.write("Select operations to perform:")
 
@@ -765,6 +832,14 @@ if build_pressed:
 
   errors = []
 
+  # Extract branch list from prompt (new behavior)
+
+  branches_from_prompt = extract_branches_from_prompt(prompt_text)
+
+  if branches_from_prompt:
+
+    st.info(f"Detected branch(es) in prompt: {', '.join(branches_from_prompt)}")
+
   if not any([op_repo, op_branch, op_codeql, op_issue]) and not llm_json_text.strip():
 
     st.error("Please select at least one operation or paste an LLM multi_file JSON.")
@@ -797,6 +872,36 @@ if build_pressed:
 
         })
 
+        # If repo create selected and branches found in prompt, create branch payloads for each
+
+        if branches_from_prompt:
+
+          for br in branches_from_prompt:
+
+            # skip if branch equals "main" (common default) - still allow if user explicitly wanted "main"
+
+            st.session_state.built_payloads.append({
+
+              "tool": "create_branch",
+
+              "arguments": {
+
+                "owner": owner,
+
+                "repo": target_repo,
+
+                "branch": br,
+
+                "base_branch": "main"
+
+              }
+
+            })
+
+          st.info(f"Added {len(branches_from_prompt)} create_branch payload(s) based on prompt.")
+
+    # If user separately checked "create branch" include the branch_name field value (avoid duplicating branches)
+
     if op_branch:
 
       if not target_repo:
@@ -805,23 +910,59 @@ if build_pressed:
 
       else:
 
-        st.session_state.built_payloads.append({
+        # If branch_name provided explicitly, add it if not already in prompt-supplied list
 
-          "tool": "create_branch",
+        explicit_branch = (branch_name.strip() or inferred_branch or "")
 
-          "arguments": {
+        if explicit_branch:
 
-            "owner": owner,
+          if explicit_branch not in branches_from_prompt:
 
-            "repo": target_repo,
+            st.session_state.built_payloads.append({
 
-            "new_branch": (branch_name.strip() or inferred_branch or "feature-branch"),
+              "tool": "create_branch",
 
-            "base_branch": "main"
+              "arguments": {
 
-          }
+                "owner": owner,
 
-        })
+                "repo": target_repo,
+
+                "branch": explicit_branch,
+
+                "base_branch": "main"
+
+              }
+
+            })
+
+          else:
+
+            st.info(f"Skipping duplicate branch '{explicit_branch}' because it was found in the prompt.")
+
+        else:
+
+          # No explicit branch provided - still create a 'feature-branch' placeholder if user expects a create branch action
+
+          st.session_state.built_payloads.append({
+
+            "tool": "create_branch",
+
+            "arguments": {
+
+              "owner": owner,
+
+              "repo": target_repo,
+
+              "branch": "feature-branch",
+
+              "base_branch": "main"
+
+            }
+
+          })
+
+    # Create CodeQL workflow payload
 
     if op_codeql:
 
@@ -856,6 +997,8 @@ if build_pressed:
           }
 
         })
+
+    # Create issue payload
 
     if op_issue:
 
@@ -1187,8 +1330,6 @@ if op_generate_wiki_existing:
 
           file_summaries = [{"path": p, "snippet": ""} for p in important_files]
 
-        # Ask Azure to create pages
-
         system_prompt = (
 
           "You are a documentation writer assistant. Given a repository file listing and a short "
@@ -1197,7 +1338,7 @@ if op_generate_wiki_existing:
 
           "explain the project, how to run it, architecture overview, and a 'Getting Started' page. "
 
-          "Return JSON only with the format: {\"pages\":[{\"path\":\"Home.md\",\"content\":\"...\"}, ...] }"
+          "Return JSON only with the format:{\"pages\":[{\"path\":\"Home.md\",\"content\":\"...\"}, ...] }"
 
         )
 
@@ -1259,8 +1400,6 @@ if op_generate_wiki_existing:
 
                 "message": f"Add docs: {path}",
 
-                # For create_or_update_file we will keep content plain unless user asked base64
-
                 "content": content if not (send_as_base64 or st.session_state.get("send_base64_default")) else b64_of_text(content)
 
               }
@@ -1287,8 +1426,6 @@ if op_generate_wiki_existing:
 
     else:
 
-      # Option: auto-publish via wiki.git if requested and git present
-
       if auto_push_wiki:
 
         if not shutil.which("git"):
@@ -1300,8 +1437,6 @@ if op_generate_wiki_existing:
           st.error("GITHUB_PERSONAL_ACCESS_TOKEN is not set in environment; cannot push to wiki.")
 
         else:
-
-          # Convert payloads to plain-text files
 
           files_to_push = []
 
@@ -1345,8 +1480,6 @@ if op_generate_wiki_existing:
 
       else:
 
-        # Just send create_or_update_file payloads to MCP (these will add files into repo, not wiki)
-
         wiki_results = []
 
         for idx, payload in enumerate(st.session_state.wiki_payloads, start=1):
@@ -1382,77 +1515,130 @@ if op_generate_wiki_existing:
         succ = [r for r in wiki_results if r.get("status") and int(r.get("status")) < 400]
 
         fail = [r for r in wiki_results if (r.get("status") and int(r.get("status")) >= 400) or r.get("error")]
+
         st.success(f"Wiki: {len(succ)} succeeded, {len(fail)} failed")
+
 st.markdown("---")
 
 # --- Send payloads logic (main) ---
 
 if send_pressed:
+
   if not st.session_state.get("built_payloads"):
+
     st.error("No built payloads found. Click 'Build payloads' first.")
+
   else:
+
     results = []
+
     for idx, payload in enumerate(st.session_state.built_payloads, start=1):
+
       st.write(f"Sending payload #{idx} -> tool: {payload.get('tool')}")
-      # If multi_file, we may need to ensure files have proper content encoding based on UI choice:
+
       p = payload.copy()
+
       if p.get("tool") == "multi_file":
+
         args = p.get("arguments", {})
+
         files = args.get("files", [])
+
         new_files = []
+
         for f in files:
+
           content = f.get("content")
+
           if content is None and "local_path" in f:
-            new_files.append(f) # server code may support local_path -> but likely not over http proxy
+
+            new_files.append(f)
+
           else:
+
             if send_as_base64 or st.session_state.get("send_base64_default"):
-              if not is_base64(content):
+
+              if content and not is_base64(content):
+
                 content = b64_of_text(content)
+
             else:
+
               if is_base64(content):
-                # we decode base64 to plain if UI requested plain sending
+
                 try:
+
                   content = base64.b64decode(content).decode("utf-8")
+
                 except Exception:
+
                   pass
+
             new_files.append({"path": f.get("path"), "content": content})
+
         p["arguments"]["files"] = new_files
 
-      # For create_or_update_file ensure content respects the send_as_base64 toggle:
-
       if p.get("tool") == "create_or_update_file":
+
         args = p.get("arguments", {})
+
         content = args.get("content")
+
         if send_as_base64 or st.session_state.get("send_base64_default"):
+
           if content and not is_base64(content):
+
             args["content"] = b64_of_text(content)
+
         else:
+
           if content and is_base64(content):
+
             try:
+
               args["content"] = base64.b64decode(content).decode("utf-8")
+
             except Exception:
+
               pass
+
         p["arguments"] = args
+
       try:
+
         resp = requests.post(mcp_url, json=p, timeout=120)
+
       except Exception as e:
+
         results.append({"error": f"Request failed: {e}"})
+
         st.error(f"Request failed for payload #{idx}: {e}")
+
         continue
+
       try:
+
         jr = resp.json()
+
         results.append({"status": resp.status_code, "json": jr})
+
       except Exception:
+
         results.append({"status": resp.status_code, "text": resp.text})
 
     st.subheader("Results")
+
     st.write(results)
+
     successes = [r for r in results if r.get("status") and int(r.get("status")) < 400]
+
     failures = [r for r in results if (r.get("status") and int(r.get("status")) >= 400) or r.get("error")]
+
     st.success(f"{len(successes)} succeeded, {len(failures)} failed")
 
 st.markdown("---")
 st.markdown("Notes:")
-st.markdown("- The app builds the JSON the http-proxy expects. For safe compatibility some MCP builds require file content base64; toggle the 'Send file content as base64' checkbox if your MCP expects base64. Default here is plain text (not base64) as requested.")
+st.markdown("- The app builds the JSON the http-proxy expects. For safe compatibility some MCP builds require file content base64; toggle the 'Send file content as base64' checkbox if your MCP expects base64. Default here is plain text (not base64).")
 st.markdown("- To auto-publish wiki pages the machine running Streamlit must have `git` installed and `GITHUB_PERSONAL_ACCESS_TOKEN` set and valid for pushing to the repo's wiki.")
 st.markdown("- If you get Azure 404 errors, verify your Azure deployment name, endpoint and API-version.")
+
